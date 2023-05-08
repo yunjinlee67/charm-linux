@@ -134,6 +134,8 @@ DEFINE_STATIC_KEY_FALSE(arm64_mismatched_32bit_el0);
  */
 static cpumask_var_t cpu_32bit_el0_mask __cpumask_var_read_mostly;
 
+void __init init_cpucap_indirect_list_impdef(void);
+
 void dump_cpu_features(void)
 {
 	/* file-wide pr_fmt adds "CPU features: " prefix */
@@ -964,7 +966,7 @@ static void init_cpu_ftr_reg(u32 sys_reg, u64 new)
 extern const struct arm64_cpu_capabilities arm64_errata[];
 static const struct arm64_cpu_capabilities arm64_features[];
 
-static void __init
+void __init
 init_cpucap_indirect_list_from_array(const struct arm64_cpu_capabilities *caps)
 {
 	for (; caps->matches; caps++) {
@@ -1064,7 +1066,14 @@ void __init init_cpu_features(struct cpuinfo_arm64 *info)
 	 * Initialize the indirect array of CPU capabilities pointers before we
 	 * handle the boot CPU below.
 	 */
+<<<<<<< HEAD
 	init_cpucap_indirect_list();
+||||||| parent of 2a13d04cf14b (arm64: Implement PR_{GET,SET}_MEM_MODEL for always-TSO CPUs)
+	init_cpu_hwcaps_indirect_list();
+=======
+	init_cpu_hwcaps_indirect_list();
+	init_cpu_hwcaps_indirect_list_impdef();
+>>>>>>> 2a13d04cf14b (arm64: Implement PR_{GET,SET}_MEM_MODEL for always-TSO CPUs)
 
 	/*
 	 * Detect and enable early CPU capabilities based on the boot CPU,
@@ -1436,7 +1445,7 @@ has_always(const struct arm64_cpu_capabilities *entry, int scope)
 	return true;
 }
 
-static bool
+bool
 feature_matches(u64 reg, const struct arm64_cpu_capabilities *entry)
 {
 	int val = cpuid_feature_extract_field_width(reg, entry->field_pos,
