@@ -1066,14 +1066,8 @@ void __init init_cpu_features(struct cpuinfo_arm64 *info)
 	 * Initialize the indirect array of CPU capabilities pointers before we
 	 * handle the boot CPU below.
 	 */
-<<<<<<< HEAD
 	init_cpucap_indirect_list();
-||||||| parent of 2a13d04cf14b (arm64: Implement PR_{GET,SET}_MEM_MODEL for always-TSO CPUs)
-	init_cpu_hwcaps_indirect_list();
-=======
-	init_cpu_hwcaps_indirect_list();
-	init_cpu_hwcaps_indirect_list_impdef();
->>>>>>> 2a13d04cf14b (arm64: Implement PR_{GET,SET}_MEM_MODEL for always-TSO CPUs)
+	init_cpucap_indirect_list_impdef();
 
 	/*
 	 * Detect and enable early CPU capabilities based on the boot CPU,
