@@ -7,7 +7,17 @@
 #include <linux/soc/apple/rtkit.h>
 
 #include "afk.h"
+#ifdef AFK_TRACE
 #include "trace.h"
+#else
+#define trace_afk_recv_handle(ep, channel, type, data_size, ehdr, eshdr) ((void)0)
+#define trace_afk_recv_qe(ep, rptr, magic, size) ((void)0)
+#define trace_afk_send_rwptr_pre(ep, rptr, wptr) ((void)0)
+#define trace_afk_recv_rwptr_pre(ep, rptr, wptr) ((void)0)
+#define trace_afk_send_rwptr_post(ep, rptr, wptr) ((void)0)
+#define trace_afk_recv_rwptr_post(ep, rptr, wptr) ((void)0)
+#define trace_afk_getbuf(ep, size, tag) ((void)0)
+#endif
 
 struct afk_receive_message_work {
 	struct apple_dcp_afkep *ep;
@@ -212,6 +222,7 @@ static struct apple_epic_service *afk_epic_find_service(struct apple_dcp_afkep *
 static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 				 u8 *payload, size_t payload_size)
 {
+#if 0
 	char name[32];
 	s64 epic_unit = -1;
 	u32 ch_idx;
@@ -285,6 +296,7 @@ static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 free:
 	kfree(epic_name);
 	kfree(epic_class);
+#endif
 }
 
 static void afk_recv_handle_teardown(struct apple_dcp_afkep *ep, u32 channel)
