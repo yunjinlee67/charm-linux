@@ -34,6 +34,7 @@ enum rbep_msg_type {
 	RBEP_GETBUF_ACK = 0xa1,
 	RBEP_INIT_TX = 0x8a,
 	RBEP_INIT_RX = 0x8b,
+	RBEP_INIT_RXTX_ACK = 0x8c,
 	RBEP_START = 0xa3,
 	RBEP_START_ACK = 0x86,
 	RBEP_SEND = 0xa2,
@@ -674,6 +675,9 @@ static void afk_receive_message_worker(struct work_struct *work_)
 	case RBEP_INIT_RX:
 		afk_init_rxtx(work->ep, work->message, &work->ep->rxbfr);
 		break;
+
+	case RBEP_INIT_RXTX_ACK:
+		break; // noop
 
 	case RBEP_RECV:
 		while (afk_recv(work->ep))
