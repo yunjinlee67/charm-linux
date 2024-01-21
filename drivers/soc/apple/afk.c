@@ -56,21 +56,25 @@ enum rbep_msg_type {
 
 static void afk_send(struct apple_dcp_afkep *ep, u64 message)
 {
-	dcp_send_message(ep->dcp, ep->endpoint, message);
+	// TODO replaced call to dcp_send_message() to call rtkit directly
+	// this removes the trace call to trace_dcp_send_msg(). we could make
+	// this call an afk ep op (fn ptr) instead.
+	apple_rtkit_send_message(ep->rtk, ep->endpoint, message, NULL, true);
 }
 
-struct apple_dcp_afkep *afk_init(struct apple_dcp *dcp, u32 endpoint,
+struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk, u32 endpoint,
 				 const struct apple_epic_service_ops *ops)
 {
 	struct apple_dcp_afkep *afkep;
 	int ret;
 
-	afkep = devm_kzalloc(dcp->dev, sizeof(*afkep), GFP_KERNEL);
+	afkep = devm_kzalloc(dev, sizeof(*afkep), GFP_KERNEL);
 	if (!afkep)
 		return ERR_PTR(-ENOMEM);
 
+	afkep->dev = dev;
+	afkep->rtk = rtk;
 	afkep->ops = ops;
-	afkep->dcp = dcp;
 	afkep->endpoint = endpoint;
 	afkep->wq = alloc_ordered_workqueue("apple-dcp-afkep%02x",
 					    WQ_MEM_RECLAIM, endpoint);
@@ -88,7 +92,7 @@ struct apple_dcp_afkep *afk_init(struct apple_dcp *dcp, u32 endpoint,
 	return afkep;
 
 out_free_afkep:
-	devm_kfree(dcp->dev, afkep);
+	devm_kfree(dev, afkep);
 	return ERR_PTR(ret);
 }
 
@@ -97,7 +101,7 @@ int afk_start(struct apple_dcp_afkep *ep)
 	int ret;
 
 	reinit_completion(&ep->started);
-	apple_rtkit_start_ep(ep->dcp->rtk, ep->endpoint);
+	apple_rtkit_start_ep(ep->rtk, ep->endpoint);
 	afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_INIT));
 
 	ret = wait_for_completion_timeout(&ep->started, msecs_to_jiffies(1000));
@@ -116,15 +120,15 @@ static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 	trace_afk_getbuf(ep, size, tag);
 
 	if (ep->bfr) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"Got GETBUF message but buffer already exists\n");
 		return;
 	}
 
-	ep->bfr = dmam_alloc_coherent(ep->dcp->dev, size, &ep->bfr_dma,
+	ep->bfr = dmam_alloc_coherent(ep->dev, size, &ep->bfr_dma,
 				      GFP_KERNEL);
 	if (!ep->bfr) {
-		dev_err(ep->dcp->dev, "Failed to allocate %d bytes buffer\n",
+		dev_err(ep->dev, "Failed to allocate %d bytes buffer\n",
 			size);
 		return;
 	}
@@ -146,19 +150,19 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	u32 bufsz, end;
 
 	if (tag != ep->bfr_tag) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: expected tag 0x%x but got 0x%x",
+		dev_err(ep->dev, "AFK[ep:%02x]: expected tag 0x%x but got 0x%x",
 			ep->endpoint, ep->bfr_tag, tag);
 		return;
 	}
 
 	if (bfr->ready) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: buffer is already initialized\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: buffer is already initialized\n",
 			ep->endpoint);
 		return;
 	}
 
 	if (base >= ep->bfr_size) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: requested base 0x%x >= max size 0x%lx",
 			ep->endpoint, base, ep->bfr_size);
 		return;
@@ -166,7 +170,7 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 
 	end = base + size;
 	if (end > ep->bfr_size) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: requested end 0x%x > max size 0x%lx",
 			ep->endpoint, end, ep->bfr_size);
 		return;
@@ -175,7 +179,7 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	bfr->hdr = ep->bfr + base;
 	bufsz = le32_to_cpu(bfr->hdr->bufsz);
 	if (bufsz + sizeof(*bfr->hdr) != size) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: ring buffer size 0x%x != expected 0x%lx",
 			ep->endpoint, bufsz, sizeof(*bfr->hdr));
 		return;
@@ -236,13 +240,13 @@ static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 	WARN_ON(afk_epic_find_service(ep, channel));
 
 	if (payload_size < sizeof(name)) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: payload too small: %lx\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: payload too small: %lx\n",
 			ep->endpoint, payload_size);
 		return;
 	}
 
 	if (ep->num_channels >= AFK_MAX_CHANNEL) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: too many enabled services!\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: too many enabled services!\n",
 			ep->endpoint);
 		return;
 	}
@@ -258,14 +262,14 @@ static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 	if (props_size > 36) {
 		int ret = parse(props, props_size, &ctx);
 		if (ret) {
-			dev_err(ep->dcp->dev,
+			dev_err(ep->dev,
 				"AFK[ep:%02x]: Failed to parse service init props for %s\n",
 				ep->endpoint, name);
 			return;
 		}
 		ret = parse_epic_service_init(&ctx, &epic_name, &epic_class, &epic_unit);
 		if (ret) {
-			dev_err(ep->dcp->dev,
+			dev_err(ep->dev,
 				"AFK[ep:%02x]: failed to extract init props: %d\n",
 				ep->endpoint, ret);
 			return;
@@ -277,7 +281,7 @@ static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 
 	ops = afk_match_service(ep, service_name);
 	if (!ops) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: unable to match service %s on channel %d\n",
 			ep->endpoint, service_name, channel);
 		goto free;
@@ -291,7 +295,7 @@ static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
 	ep->services[ch_idx].channel = channel;
 	ep->services[ch_idx].cmd_tag = 0;
 	ops->init(&ep->services[ch_idx], epic_name, epic_class, epic_unit);
-	dev_info(ep->dcp->dev, "AFK[ep:%02x]: new service %s on channel %d\n",
+	dev_info(ep->dev, "AFK[ep:%02x]: new service %s on channel %d\n",
 		 ep->endpoint, service_name, channel);
 free:
 	kfree(epic_name);
@@ -307,7 +311,7 @@ static void afk_recv_handle_teardown(struct apple_dcp_afkep *ep, u32 channel)
 
 	service = afk_epic_find_service(ep, channel);
 	if (!service) {
-		dev_warn(ep->dcp->dev, "AFK[ep:%02x]: teardown for disabled channel %u\n",
+		dev_warn(ep->dev, "AFK[ep:%02x]: teardown for disabled channel %u\n",
 			 ep->endpoint, channel);
 		return;
 	}
@@ -335,20 +339,20 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
 
 	service = afk_epic_find_service(ep, channel);
 	if (!service) {
-		dev_warn(ep->dcp->dev, "AFK[ep:%02x]: command reply on disabled channel %u\n",
+		dev_warn(ep->dev, "AFK[ep:%02x]: command reply on disabled channel %u\n",
 			 ep->endpoint, channel);
 		return;
 	}
 
 	if (payload_size < sizeof(*cmd)) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: command reply on channel %d too small: %ld\n",
 			ep->endpoint, channel, payload_size);
 		return;
 	}
 
 	if (idx >= MAX_PENDING_CMDS) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: command reply on channel %d out of range: %d\n",
 			ep->endpoint, channel, idx);
 		return;
@@ -356,7 +360,7 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
 
 	spin_lock_irqsave(&service->lock, flags);
 	if (service->cmds[idx].done) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: command reply on channel %d already handled\n",
 			ep->endpoint, channel);
 		spin_unlock_irqrestore(&service->lock, flags);
@@ -364,7 +368,7 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
 	}
 
 	if (tag != service->cmds[idx].tag) {
-		dev_err(ep->dcp->dev,
+		dev_err(ep->dev,
 			"AFK[ep:%02x]: command reply on channel %d has invalid tag: expected 0x%04x != 0x%04x\n",
 			ep->endpoint, channel, tag, service->cmds[idx].tag);
 		spin_unlock_irqrestore(&service->lock, flags);
@@ -392,9 +396,9 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
 	spin_unlock_irqrestore(&service->lock, flags);
 
 	if (rxbuf && rxlen)
-		dma_free_coherent(ep->dcp->dev, rxlen, rxbuf, rxbuf_dma);
+		dma_free_coherent(ep->dev, rxlen, rxbuf, rxbuf_dma);
 	if (txbuf && txlen)
-		dma_free_coherent(ep->dcp->dev, txlen, txbuf, txbuf_dma);
+		dma_free_coherent(ep->dev, txlen, txbuf, txbuf_dma);
 }
 
 struct epic_std_service_ap_call {
@@ -414,7 +418,7 @@ static void afk_recv_handle_std_service(struct apple_dcp_afkep *ep, u32 channel,
 	struct apple_epic_service *service = afk_epic_find_service(ep, channel);
 
 	if (!service) {
-		dev_warn(ep->dcp->dev,
+		dev_warn(ep->dev,
 			 "AFK[ep:%02x]: std service notify on disabled channel %u\n",
 			 ep->endpoint, channel);
 		return;
@@ -463,7 +467,7 @@ static void afk_recv_handle_std_service(struct apple_dcp_afkep *ep, u32 channel,
 		return;
 	}
 
-	dev_err(ep->dcp->dev,
+	dev_err(ep->dev,
 		"AFK[ep:%02x]: channel %d received unhandled standard service message: %x / %x\n",
 		ep->endpoint, channel, type, eshdr->category);
 	print_hex_dump(KERN_INFO, "AFK: ", DUMP_PREFIX_NONE, 16, 1, payload,
@@ -482,7 +486,7 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 	size_t payload_size;
 
 	if (data_size < sizeof(*ehdr) + sizeof(*eshdr)) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: payload too small: %lx\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: payload too small: %lx\n",
 			ep->endpoint, data_size);
 		return;
 	}
@@ -494,25 +498,25 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 
 	if (!service) {
 		if (type != EPIC_TYPE_NOTIFY && type != EPIC_TYPE_REPLY) {
-			dev_err(ep->dcp->dev,
+			dev_err(ep->dev,
 				"AFK[ep:%02x]: expected notify but got 0x%x on channel %d\n",
 				ep->endpoint, type, channel);
 			return;
 		}
 		if (eshdr->category != EPIC_CAT_REPORT) {
-			dev_err(ep->dcp->dev,
+			dev_err(ep->dev,
 				"AFK[ep:%02x]: expected report but got 0x%x on channel %d\n",
 				ep->endpoint, eshdr->category, channel);
 			return;
 		}
 		if (subtype == EPIC_SUBTYPE_TEARDOWN) {
-			dev_dbg(ep->dcp->dev,
+			dev_dbg(ep->dev,
 				"AFK[ep:%02x]: teardown without service on channel %d\n",
 				ep->endpoint, channel);
 			return;
 		}
 		if (subtype != EPIC_SUBTYPE_ANNOUNCE) {
-			dev_err(ep->dcp->dev,
+			dev_err(ep->dev,
 				"AFK[ep:%02x]: expected announce but got 0x%x on channel %d\n",
 				ep->endpoint, subtype, channel);
 			return;
@@ -522,7 +526,7 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 	}
 
 	if (!service) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: channel %d has no service\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: channel %d has no service\n",
 			ep->endpoint, channel);
 		return;
 	}
@@ -540,7 +544,7 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 		return afk_recv_handle_std_service(
 			ep, channel, type, ehdr, eshdr, payload, payload_size);
 
-	dev_err(ep->dcp->dev, "AFK[ep:%02x]: channel %d received unhandled message "
+	dev_err(ep->dev, "AFK[ep:%02x]: channel %d received unhandled message "
 		"(type %x subtype %x)\n", ep->endpoint, channel, type, subtype);
 	print_hex_dump(KERN_INFO, "AFK: ", DUMP_PREFIX_NONE, 16, 1, payload,
 				   payload_size, true);
@@ -553,7 +557,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 	u32 magic, size, channel, type;
 
 	if (!ep->rxbfr.ready) {
-		dev_err(ep->dcp->dev, "AFK[ep:%02x]: got RECV but not ready\n",
+		dev_err(ep->dev, "AFK[ep:%02x]: got RECV but not ready\n",
 			ep->endpoint);
 		return false;
 	}
@@ -566,7 +570,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 		return false;
 
 	if (rptr > (ep->rxbfr.bufsz - sizeof(*hdr))) {
-		dev_warn(ep->dcp->dev,
+		dev_warn(ep->dev,
 			 "AFK[ep:%02x]: rptr out of bounds: 0x%x > 0x%lx\n",
 			 ep->endpoint, rptr, ep->rxbfr.bufsz - sizeof(*hdr));
 		return false;
@@ -580,7 +584,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 	trace_afk_recv_qe(ep, rptr, magic, size);
 
 	if (magic != QE_MAGIC) {
-		dev_warn(ep->dcp->dev, "AFK[ep:%02x]: invalid queue entry magic: 0x%x\n",
+		dev_warn(ep->dev, "AFK[ep:%02x]: invalid queue entry magic: 0x%x\n",
 			 ep->endpoint, magic);
 		return false;
 	}
@@ -598,7 +602,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 		trace_afk_recv_qe(ep, rptr, magic, size);
 
 		if (magic != QE_MAGIC) {
-			dev_warn(ep->dcp->dev,
+			dev_warn(ep->dev,
 				 "AFK[ep:%02x]: invalid next queue entry magic: 0x%x\n",
 				 ep->endpoint, magic);
 			return false;
@@ -608,7 +612,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 	}
 
 	if (rptr + size + sizeof(*hdr) > ep->rxbfr.bufsz) {
-		dev_warn(ep->dcp->dev,
+		dev_warn(ep->dev,
 			 "AFK[ep:%02x]: queue entry out of bounds: 0x%lx > 0x%lx\n",
 			 ep->endpoint, rptr + size + sizeof(*hdr), ep->rxbfr.bufsz);
 		return false;
@@ -627,7 +631,6 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 
 	ep->rxbfr.hdr->rptr = cpu_to_le32(rptr);
 	trace_afk_recv_rwptr_post(ep, rptr, wptr);
-
 	/*
 	 * TODO: this is theoretically unsafe since DCP could overwrite data
 	 *       after the read pointer was updated above. Do it anyway since
@@ -678,7 +681,7 @@ static void afk_receive_message_worker(struct work_struct *work_)
 		break;
 
 	default:
-		dev_err(work->ep->dcp->dev,
+		dev_err(work->ep->dev,
 			"Received unknown AFK message type: 0x%x\n", type);
 	}
 
@@ -859,11 +862,11 @@ int afk_send_command(struct apple_epic_service *service, u8 type,
 	struct apple_dcp_afkep *ep = service->ep;
 	DECLARE_COMPLETION_ONSTACK(completion);
 
-	rxbuf = dma_alloc_coherent(ep->dcp->dev, output_len, &rxbuf_dma,
+	rxbuf = dma_alloc_coherent(ep->dev, output_len, &rxbuf_dma,
 				   GFP_KERNEL);
 	if (!rxbuf)
 		return -ENOMEM;
-	txbuf = dma_alloc_coherent(ep->dcp->dev, payload_len, &txbuf_dma,
+	txbuf = dma_alloc_coherent(ep->dev, payload_len, &txbuf_dma,
 				   GFP_KERNEL);
 	if (!txbuf) {
 		ret = -ENOMEM;
@@ -940,9 +943,9 @@ err_free_cmd:
 	bitmap_release_region(service->cmd_map, idx, 0);
 err_unlock:
 	spin_unlock_irqrestore(&service->lock, flags);
-	dma_free_coherent(ep->dcp->dev, payload_len, txbuf, txbuf_dma);
+	dma_free_coherent(ep->dev, payload_len, txbuf, txbuf_dma);
 err_free_rxbuf:
-	dma_free_coherent(ep->dcp->dev, output_len, rxbuf, rxbuf_dma);
+	dma_free_coherent(ep->dev, output_len, rxbuf, rxbuf_dma);
 	return ret;
 }
 

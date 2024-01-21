@@ -10,8 +10,6 @@
 #include <linux/completion.h>
 #include <linux/types.h>
 
-#include "dcp.h"
-
 #define AFK_MAX_CHANNEL 16
 #define MAX_PENDING_CMDS 16
 
@@ -152,7 +150,8 @@ struct afk_ringbuffer {
 };
 
 struct apple_dcp_afkep {
-	struct apple_dcp *dcp;
+	struct device *dev;
+	struct apple_rtkit *rtk;
 
 	u32 endpoint;
 	struct workqueue_struct *wq;
@@ -176,7 +175,7 @@ struct apple_dcp_afkep {
 	u32 num_channels;
 };
 
-struct apple_dcp_afkep *afk_init(struct apple_dcp *dcp, u32 endpoint,
+struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk, u32 endpoint,
 				 const struct apple_epic_service_ops *ops);
 int afk_start(struct apple_dcp_afkep *ep);
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
