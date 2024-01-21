@@ -63,8 +63,8 @@ static void afk_send(struct apple_dcp_afkep *ep, u64 message)
 	apple_rtkit_send_message(ep->rtk, ep->endpoint, message, NULL, true);
 }
 
-struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk, u32 endpoint,
-				 const struct apple_epic_service_ops *ops)
+struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
+			void *priv, u32 endpoint, const struct apple_epic_service_ops *ops)
 {
 	struct apple_dcp_afkep *afkep;
 	int ret;
@@ -75,6 +75,7 @@ struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk, u3
 
 	afkep->dev = dev;
 	afkep->rtk = rtk;
+	afkep->priv = priv;
 	afkep->ops = ops;
 	afkep->endpoint = endpoint;
 	afkep->wq = alloc_ordered_workqueue("apple-dcp-afkep%02x",

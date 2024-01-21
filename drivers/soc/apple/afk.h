@@ -152,6 +152,7 @@ struct afk_ringbuffer {
 struct apple_dcp_afkep {
 	struct device *dev;
 	struct apple_rtkit *rtk;
+	void *priv; /* device cookie */
 
 	u32 endpoint;
 	struct workqueue_struct *wq;
@@ -175,8 +176,8 @@ struct apple_dcp_afkep {
 	u32 num_channels;
 };
 
-struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk, u32 endpoint,
-				 const struct apple_epic_service_ops *ops);
+struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
+		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops);
 int afk_start(struct apple_dcp_afkep *ep);
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
 int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
