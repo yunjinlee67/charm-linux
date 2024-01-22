@@ -638,6 +638,40 @@
 			phandle = <&display>;
 		};
 
+		aop_dart: iommu@24a808000 {
+			compatible = "apple,t8103-dart";
+			reg = <0x2 0x4a808000 0x0 0x4000>;
+			#iommu-cells = <1>;
+			interrupt-parent = <&aic>;
+			interrupts = <AIC_IRQ 300 IRQ_TYPE_LEVEL_HIGH>;
+			apple,dma-range = <0x0 0x00034000 0x0 0x10000000>;
+		};
+
+		aop_mbox: mbox@24a408000 {
+			compatible = "apple,t8103-asc-mailbox", "apple,asc-mailbox-v4";
+			reg = <0x2 0x4a408000 0x0 0x4000>;
+			interrupt-parent = <&aic>;
+			interrupts = <AIC_IRQ 285 IRQ_TYPE_LEVEL_HIGH>,
+				<AIC_IRQ 286 IRQ_TYPE_LEVEL_HIGH>,
+				<AIC_IRQ 287 IRQ_TYPE_LEVEL_HIGH>,
+				<AIC_IRQ 288 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "send-empty", "send-not-empty",
+				"recv-empty", "recv-not-empty";
+			#mbox-cells = <0>;
+		};
+
+		aop: aop@24a400000 {
+			compatible = "apple,t8103-aop", "apple,aop";
+			mboxes = <&aop_mbox>;
+			mbox-names = "mbox";
+			iommus = <&aop_dart 0>;
+			reg-names = "asc", "nub";
+			reg = <0x2 0x4a400000 0x0 0x4000>,
+				  <0x2 0x4ac00000 0x0 0x250000>;
+			phandle = <&aop>;
+			/* no power domains for aop/dart-aop */
+		};
+
 		isp_dart0: iommu@22c0e8000 {
 			compatible = "apple,t8103-dart";
 			reg = <0x2 0x2c0e8000 0x0 0x4000>;
