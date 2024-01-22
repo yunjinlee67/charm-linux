@@ -658,7 +658,10 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 	size = le32_to_cpu(hdr->size);
 	trace_afk_recv_qe(ep, rptr, magic, size);
 
-	if (magic != QE_MAGIC) {
+	/* DCP uses magic 'IOP' both ways. AOP uses 'IOP' for TX and 'AOP' for RX.
+	 * Allow both for simplicty. It's a single bit off (bit 3).
+	 */
+	if (magic != QE_MAGIC_IOP && magic != QE_MAGIC_AOP) {
 		dev_warn(ep->dev, "AFK[ep:%02x]: invalid queue entry magic: 0x%x\n",
 			 ep->endpoint, magic);
 		return false;
@@ -676,7 +679,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 		size = le32_to_cpu(hdr->size);
 		trace_afk_recv_qe(ep, rptr, magic, size);
 
-		if (magic != QE_MAGIC) {
+		if (magic != QE_MAGIC_IOP && magic != QE_MAGIC_AOP) {
 			dev_warn(ep->dev,
 				 "AFK[ep:%02x]: invalid next queue entry magic: 0x%x\n",
 				 ep->endpoint, magic);
@@ -886,7 +889,7 @@ int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 	 * enough space at wptr to store the payload.
 	 */
 
-	hdr->magic = cpu_to_le32(QE_MAGIC);
+	hdr->magic = cpu_to_le32(QE_MAGIC_IOP);
 	hdr->size = cpu_to_le32(total_epic_size);
 	hdr->channel = cpu_to_le32(channel);
 	hdr->type = cpu_to_le32(etype);

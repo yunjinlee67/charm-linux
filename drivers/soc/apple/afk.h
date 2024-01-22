@@ -63,7 +63,8 @@ struct apple_epic_service_ops {
 };
 
 struct afk_qe {
-#define QE_MAGIC 0x20504f49 // ' POI'
+#define QE_MAGIC_IOP 0x20504f49 // ' POI'
+#define QE_MAGIC_AOP 0x20504f41 // ' POA'
 	__le32 magic;
 	__le32 size;
 	__le32 channel;
