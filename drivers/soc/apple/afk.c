@@ -44,6 +44,7 @@ enum rbep_msg_type {
 };
 
 #define BLOCK_SHIFT 6
+#define ROUNDTRIP_BUF_SIZE 0x1000
 
 #define GETBUF_SIZE GENMASK(31, 16)
 #define GETBUF_TAG GENMASK(15, 0)
@@ -111,6 +112,31 @@ int afk_start(struct apple_dcp_afkep *ep)
 		return -ETIMEDOUT;
 	else
 		return 0;
+}
+
+static void afk_alloc_roundtrip(struct apple_dcp_afkep *ep, u64 message,
+							   struct afk_ringbuffer *bfr)
+{
+	u32 size = ROUNDTRIP_BUF_SIZE;
+
+	bfr->buf = dmam_alloc_coherent(ep->dev, size, &ep->bfr_dma,
+				      GFP_KERNEL);
+	if (!bfr->buf) {
+		dev_err(ep->dev, "Failed to allocate %d bytes buffer\n",
+			size);
+		return;
+	}
+
+	bfr->buf = bfr->buf;
+	bfr->bufsz = size;
+	bfr->ready = true;
+}
+
+static void afk_init_roundtrip(struct apple_dcp_afkep *ep, u64 message)
+{
+	afk_alloc_roundtrip(ep, message, &ep->rt_rxbfr);
+	afk_alloc_roundtrip(ep, message, &ep->rt_txbfr);
+	afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_INIT_ACK));
 }
 
 static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
@@ -663,6 +689,10 @@ static void afk_receive_message_worker(struct work_struct *work_)
 
 	case RBEP_SHUTDOWN_ACK:
 		complete_all(&work->ep->stopped);
+		break;
+
+	case RBEP_INIT: // RX is used to init roundtrip bfrs
+		afk_init_roundtrip(work->ep, work->message);
 		break;
 
 	case RBEP_GETBUF:
