@@ -62,16 +62,6 @@ struct apple_epic_service_ops {
 	void (*teardown)(struct apple_epic_service *service);
 };
 
-struct afk_ringbuffer_header {
-	__le32 bufsz;
-	u32 unk;
-	u32 _pad1[14];
-	__le32 rptr;
-	u32 _pad2[15];
-	__le32 wptr;
-	u32 _pad3[15];
-};
-
 struct afk_qe {
 #define QE_MAGIC 0x20504f49 // ' POI'
 	__le32 magic;
@@ -143,10 +133,11 @@ enum epic_subtype {
 
 struct afk_ringbuffer {
 	bool ready;
-	struct afk_ringbuffer_header *hdr;
 	u32 rptr;
 	void *buf;
+	void *hdr;
 	size_t bufsz;
+	u32 hdr_shift;
 };
 
 struct apple_dcp_afkep {
@@ -156,7 +147,8 @@ struct apple_dcp_afkep {
 
 	u32 endpoint;
 	struct workqueue_struct *wq;
-	bool dummy; // do not send RBEP_START message. used for aop's gyro
+	bool dummy; // do not send RBEP_START message. used only for aop's gyro
+	u32 hdr_shift; // 6 for dcp & aop<12.3, 7 for aop
 
 	struct completion started;
 	struct completion stopped;
@@ -198,7 +190,7 @@ struct apple_dcp_afkep {
 	dev_err((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
 
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
-		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops);
+		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops, u32 hdr_shift);
 int afk_start(struct apple_dcp_afkep *ep);
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
 int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,

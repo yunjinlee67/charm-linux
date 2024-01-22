@@ -65,7 +65,8 @@ static void afk_send(struct apple_dcp_afkep *ep, u64 message)
 }
 
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
-			void *priv, u32 endpoint, const struct apple_epic_service_ops *ops)
+			void *priv, u32 endpoint, const struct apple_epic_service_ops *ops,
+			u32 hdr_shift)
 {
 	struct apple_dcp_afkep *afkep;
 	int ret;
@@ -79,6 +80,7 @@ struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
 	afkep->priv = priv;
 	afkep->ops = ops;
 	afkep->endpoint = endpoint;
+	afkep->hdr_shift = hdr_shift;
 	afkep->wq = alloc_ordered_workqueue("apple-dcp-afkep%02x",
 					    WQ_MEM_RECLAIM, endpoint);
 	if (!afkep->wq) {
@@ -169,13 +171,56 @@ static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 	afk_send(ep, reply);
 }
 
+/*
+ * AFK ringbuffer reserves the first block for exchanging rptr/wptrs, which is
+ * the ringbuf "header". But the ringbuf header structure differs across
+ * device and firmware versions. Thankfully this difference is minimal and
+ * we can still share this code. For instance, dcp's (and aop<12.3's) header:
+ *
+ *  struct afk_ringbuffer_header {
+ *	   __le32 bufsz;
+ *	   u32 unk;
+ *	   u32 _pad1[14]; // 30 for aop
+ *	   __le32 rptr;
+ *	   u32 _pad2[15]; // 31 for aop
+ *	   __le32 wptr;
+ *	   u32 _pad3[15]; // 31 for aop
+ *  };
+ *
+ * i.e. each block is placed apart at stride 0x40 for dcp; for aop it's 0x80.
+ * Since we can't have a nice header struct anymore, pass the stride and
+ * access rptr/wptrs through calulcated offsets.
+ */
+
+static inline u32 afk_rb_get_rptr(struct afk_ringbuffer *bfr)
+{
+	__le32 rptr = *(__le32 *)(bfr->hdr + (1 << bfr->hdr_shift));
+	return le32_to_cpu(rptr);
+}
+
+static inline u32 afk_rb_get_wptr(struct afk_ringbuffer *bfr)
+{
+	__le32 wptr = *(__le32 *)(bfr->hdr + (2 << bfr->hdr_shift));
+	return le32_to_cpu(wptr);
+}
+
+static inline void afk_rb_set_rptr(struct afk_ringbuffer *bfr, u32 rptr)
+{
+	*(__le32 *)(bfr->hdr + (1 << bfr->hdr_shift)) = cpu_to_le32(rptr);
+}
+
+static inline void afk_rb_set_wptr(struct afk_ringbuffer *bfr, u32 wptr)
+{
+	*(__le32 *)(bfr->hdr + (2 << bfr->hdr_shift)) = cpu_to_le32(wptr);
+}
+
 static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 			  struct afk_ringbuffer *bfr)
 {
 	u32 base = FIELD_GET(INITRB_OFFSET, message) << BLOCK_SHIFT;
 	u32 size = FIELD_GET(INITRB_SIZE, message) << BLOCK_SHIFT;
 	u16 tag = FIELD_GET(INITRB_TAG, message);
-	u32 bufsz, end;
+	u32 bufsz, hdrsz, end;
 
 	if (tag != ep->bfr_tag) {
 		dev_err(ep->dev, "AFK[ep:%02x]: expected tag 0x%x but got 0x%x",
@@ -205,15 +250,17 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	}
 
 	bfr->hdr = ep->bfr + base;
-	bufsz = le32_to_cpu(bfr->hdr->bufsz);
-	if (bufsz + sizeof(*bfr->hdr) != size) {
+	bfr->hdr_shift = ep->hdr_shift;
+	bufsz = le32_to_cpu(*(__le32 *)bfr->hdr);
+	hdrsz = 3 << bfr->hdr_shift; /* bufsz, rptr, wptr block */
+	if (bufsz + hdrsz != size) {
 		dev_err(ep->dev,
-			"AFK[ep:%02x]: ring buffer size 0x%x != expected 0x%lx",
-			ep->endpoint, bufsz, sizeof(*bfr->hdr));
+			"AFK[ep:%02x]: ring buffer size 0x%x + header size 0x%x != expected 0x%x",
+			ep->endpoint, bufsz, hdrsz, size);
 		return;
 	}
 
-	bfr->buf = bfr->hdr + 1;
+	bfr->buf = bfr->hdr + hdrsz;
 	bfr->bufsz = bufsz;
 	bfr->ready = true;
 
@@ -590,8 +637,8 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 		return false;
 	}
 
-	rptr = le32_to_cpu(ep->rxbfr.hdr->rptr);
-	wptr = le32_to_cpu(ep->rxbfr.hdr->wptr);
+	rptr = afk_rb_get_rptr(&ep->rxbfr);
+	wptr = afk_rb_get_wptr(&ep->rxbfr);
 	trace_afk_recv_rwptr_pre(ep, rptr, wptr);
 
 	if (rptr == wptr)
@@ -636,7 +683,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 			return false;
 		}
 
-		ep->rxbfr.hdr->rptr = cpu_to_le32(rptr);
+		afk_rb_set_rptr(&ep->rxbfr, rptr);
 	}
 
 	if (rptr + size + sizeof(*hdr) > ep->rxbfr.bufsz) {
@@ -657,7 +704,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 
 	dma_mb();
 
-	ep->rxbfr.hdr->rptr = cpu_to_le32(rptr);
+	afk_rb_set_rptr(&ep->rxbfr, rptr);
 	trace_afk_recv_rwptr_post(ep, rptr, wptr);
 	/*
 	 * TODO: this is theoretically unsafe since DCP could overwrite data
@@ -755,8 +802,8 @@ int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 	spin_lock_irqsave(&ep->lock, flags);
 
 	dma_rmb();
-	rptr = le32_to_cpu(ep->txbfr.hdr->rptr);
-	wptr = le32_to_cpu(ep->txbfr.hdr->wptr);
+	rptr = afk_rb_get_rptr(&ep->txbfr);
+	wptr = afk_rb_get_wptr(&ep->txbfr);
 	trace_afk_send_rwptr_pre(ep, rptr, wptr);
 	total_epic_size = sizeof(*ehdr) + sizeof(*eshdr) + payload_len;
 	total_size = sizeof(*hdr) + total_epic_size;
@@ -874,7 +921,7 @@ int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 		wptr = 0;
 	trace_afk_send_rwptr_post(ep, rptr, wptr);
 
-	ep->txbfr.hdr->wptr = cpu_to_le32(wptr);
+	afk_rb_set_wptr(&ep->txbfr, wptr);
 	afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_SEND) |
 			     FIELD_PREP(SEND_WPTR, wptr));
 	ret = 0;
