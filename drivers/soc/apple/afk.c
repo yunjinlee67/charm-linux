@@ -115,7 +115,7 @@ int afk_start(struct apple_dcp_afkep *ep)
 
 static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 {
-	u16 size = FIELD_GET(GETBUF_SIZE, message) << BLOCK_SHIFT;
+	u32 size = FIELD_GET(GETBUF_SIZE, message) << BLOCK_SHIFT;
 	u16 tag = FIELD_GET(GETBUF_TAG, message);
 	u64 reply;
 
@@ -146,8 +146,8 @@ static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 			  struct afk_ringbuffer *bfr)
 {
-	u16 base = FIELD_GET(INITRB_OFFSET, message) << BLOCK_SHIFT;
-	u16 size = FIELD_GET(INITRB_SIZE, message) << BLOCK_SHIFT;
+	u32 base = FIELD_GET(INITRB_OFFSET, message) << BLOCK_SHIFT;
+	u32 size = FIELD_GET(INITRB_SIZE, message) << BLOCK_SHIFT;
 	u16 tag = FIELD_GET(INITRB_TAG, message);
 	u32 bufsz, end;
 
