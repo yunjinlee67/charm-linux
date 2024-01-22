@@ -88,7 +88,12 @@ static void spuapp_service_init(struct apple_epic_service *service, const char *
 
 static const struct apple_epic_service_ops spuappep_ops[] = {
 	{
-		.name = "spuapp",
+		.name = "SPUApp",
+		.init = spuapp_service_init,
+		.report = aop_epic_handle_report,
+	},
+	{
+		.name = "i2c",
 		.init = spuapp_service_init,
 		.report = aop_epic_handle_report,
 	},
@@ -221,7 +226,7 @@ static void audio_service_init(struct apple_epic_service *service, const char *n
 
 static const struct apple_epic_service_ops audioep_ops[] = {
 	{
-		.name = "audio",
+		.name = "aop-audio",
 		.init = audio_service_init,
 		.report = aop_epic_handle_report,
 	},
@@ -243,7 +248,7 @@ static void voicetrigger_service_init(struct apple_epic_service *service, const 
 
 static const struct apple_epic_service_ops voicetriggerep_ops[] = {
 	{
-		.name = "voicetrigger",
+		.name = "aop-voicetrigger",
 		.init = voicetrigger_service_init,
 		.report = aop_epic_handle_report,
 	},
