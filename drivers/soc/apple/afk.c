@@ -590,7 +590,8 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 				ep->endpoint, channel);
 			return;
 		}
-		if (subtype != EPIC_SUBTYPE_ANNOUNCE) {
+		if (subtype != EPIC_SUBTYPE_ANNOUNCE &&
+		    subtype != EPIC_SUBTYPE_STD_SERVICE) { // aop uses std as announce
 			dev_err(ep->dev,
 				"AFK[ep:%02x]: expected announce but got 0x%x on channel %d\n",
 				ep->endpoint, subtype, channel);
