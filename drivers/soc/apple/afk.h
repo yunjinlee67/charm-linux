@@ -49,6 +49,11 @@ struct apple_epic_service {
 
 enum epic_subtype;
 
+struct apple_afk_epic_ops {
+	void (*recv_handle_init)(struct apple_dcp_afkep *ep, u16 subtype, u32 channel,
+				 u8 *payload, size_t payload_size);
+};
+
 struct apple_epic_service_ops {
 	const char name[32];
 
@@ -168,6 +173,7 @@ struct apple_dcp_afkep {
 	spinlock_t lock;
 	u16 qe_seq;
 
+	const struct apple_afk_epic_ops *ep_ops;
 	const struct apple_epic_service_ops *ops;
 	struct apple_epic_service services[AFK_MAX_CHANNEL];
 	u32 num_channels;
@@ -191,7 +197,8 @@ struct apple_dcp_afkep {
 	dev_err((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
 
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
-		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops, u32 hdr_shift);
+		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops, u32 hdr_shift,
+		const struct apple_afk_epic_ops *ep_ops);
 int afk_start(struct apple_dcp_afkep *ep);
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
 int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
@@ -203,4 +210,9 @@ int afk_send_command(struct apple_epic_service *service, u8 type,
 int afk_service_call(struct apple_epic_service *service, u16 group, u32 command,
 		     const void *data, size_t data_len, size_t data_pad,
 		     void *output, size_t output_len, size_t output_pad);
+
+const struct apple_epic_service_ops *
+	afk_match_service(struct apple_dcp_afkep *ep, const char *name);
+struct apple_epic_service *afk_epic_find_service(struct apple_dcp_afkep *ep,
+						 u32 channel);
 #endif
