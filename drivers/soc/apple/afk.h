@@ -176,6 +176,23 @@ struct apple_dcp_afkep {
 	u32 num_channels;
 };
 
+#define afkep_to_device(ep) (ep->priv)
+#define afk_to_device(service) (service->ep->priv)
+
+#define afkep_dbg(service, fmt, ...) \
+	dev_info((service)->ep->dev, "[%s] " fmt, service->ops->name, ##__VA_ARGS__)
+#define afkep_info(service, fmt, ...) \
+	dev_info((service)->ep->dev, "[%s] " fmt, service->ops->name, ##__VA_ARGS__)
+#define afkep_err(service, fmt, ...) \
+	dev_err((service)->ep->dev, "[%s] " fmt, service->ops->name, ##__VA_ARGS__)
+
+#define afk_dbg(ep, fmt, ...) \
+	dev_info((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
+#define afk_info(ep, fmt, ...) \
+	dev_info((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
+#define afk_err(ep, fmt, ...) \
+	dev_err((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
+
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
 		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops);
 int afk_start(struct apple_dcp_afkep *ep);
