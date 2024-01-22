@@ -55,7 +55,7 @@ enum {
 	AOP_REPORT_HELLO      = 0xc0,
 };
 
-#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops))
+#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops, 7))
 
 static int aop_epic_hello_report(struct apple_epic_service *service,
 			 const void *data, size_t data_size)
