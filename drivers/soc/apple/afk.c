@@ -191,7 +191,7 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	bfr->bufsz = bufsz;
 	bfr->ready = true;
 
-	if (ep->rxbfr.ready && ep->txbfr.ready)
+	if (ep->rxbfr.ready && ep->txbfr.ready && !ep->dummy)
 		afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_START));
 }
 
