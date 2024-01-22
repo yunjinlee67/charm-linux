@@ -55,7 +55,69 @@ enum {
 	AOP_REPORT_HELLO      = 0xc0,
 };
 
-#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops, 7))
+struct aop_epic_service_init {
+	char name[16];
+	u32 unk0;
+	u32 unk1;
+	u32 retcode;
+	u32 unk3;
+	u32 channel;
+	u32 unk5;
+	u32 unk6;
+};
+static_assert(sizeof(struct aop_epic_service_init) == 0x2c);
+
+static void apple_aop_recv_handle_init(struct apple_dcp_afkep *ep, u16 subtype, u32 channel,
+				 u8 *payload, size_t payload_size)
+{
+	struct apple_aop *aop = afkep_to_device(ep);
+	const struct apple_epic_service_ops *ops;
+	struct aop_epic_service_init *prop;
+	u32 ch_idx;
+
+	WARN_ON(subtype != EPIC_SUBTYPE_STD_SERVICE);
+	WARN_ON(payload_size != sizeof(*prop));
+
+	if (payload_size < sizeof(*prop)) {
+		dev_err(ep->dev, "AFK[ep:%02x]: payload too small: %lx\n",
+			ep->endpoint, payload_size);
+		return;
+	}
+
+	if (ep->num_channels >= AFK_MAX_CHANNEL) {
+		dev_err(ep->dev, "AFK[ep:%02x]: too many enabled services!\n",
+			ep->endpoint);
+		return;
+	}
+
+	prop = (struct aop_epic_service_init *)payload;
+	/* aop doesn't use the passed channel var; we parse it from the struct */
+	WARN_ON(afk_epic_find_service(ep, prop->channel));
+
+	ops = afk_match_service(ep, prop->name);
+	if (!ops) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: unable to match service %s on channel %d\n",
+			ep->endpoint, prop->name, prop->channel);
+		return;
+	}
+
+	ch_idx = ep->num_channels++;
+	spin_lock_init(&ep->services[ch_idx].lock);
+	ep->services[ch_idx].enabled = true;
+	ep->services[ch_idx].ops = ops;
+	ep->services[ch_idx].ep = ep;
+	ep->services[ch_idx].channel = prop->channel;
+	ep->services[ch_idx].cmd_tag = 0;
+	dev_info(ep->dev, "AFK[ep:%02x]: new service %s on channel 0x%x\n",
+		 ep->endpoint, prop->name, prop->channel);
+}
+
+static const struct apple_afk_epic_ops apple_aop_epic_ops = {
+	.recv_handle_init = apple_aop_recv_handle_init,
+};
+
+#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops, 7, &apple_aop_epic_ops))
 
 static int aop_epic_hello_report(struct apple_epic_service *service,
 			 const void *data, size_t data_size)
