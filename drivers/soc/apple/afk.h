@@ -165,9 +165,6 @@ struct apple_dcp_afkep {
 	struct afk_ringbuffer txbfr;
 	struct afk_ringbuffer rxbfr;
 
-	struct afk_ringbuffer rt_rxbfr;
-	struct afk_ringbuffer rt_txbfr;
-
 	spinlock_t lock;
 	u16 qe_seq;
 
