@@ -143,7 +143,7 @@ struct afk_ringbuffer {
 	void *buf;
 	void *hdr;
 	size_t bufsz;
-	u32 hdr_shift;
+	size_t blksz;
 };
 
 struct apple_dcp_afkep {
@@ -154,7 +154,6 @@ struct apple_dcp_afkep {
 	u32 endpoint;
 	struct workqueue_struct *wq;
 	bool dummy; // do not send RBEP_START message. used only for aop's gyro
-	u32 hdr_shift; // 6 for dcp & aop<12.3, 7 for aop
 
 	struct completion started;
 	struct completion stopped;
@@ -197,7 +196,7 @@ struct apple_dcp_afkep {
 	dev_err((ep)->dev, "[ep:%x] " fmt, ep->endpoint, ##__VA_ARGS__)
 
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
-		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops, u32 hdr_shift,
+		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops,
 		const struct apple_afk_epic_ops *ep_ops);
 int afk_start(struct apple_dcp_afkep *ep);
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
