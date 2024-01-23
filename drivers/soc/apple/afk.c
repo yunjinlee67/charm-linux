@@ -353,23 +353,16 @@ static void afk_recv_handle_teardown(struct apple_dcp_afkep *ep, u32 channel)
 		ops->teardown(service);
 }
 
-static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
-				  u16 tag, void *payload, size_t payload_size)
+static void afk_handle_reply_cmd(struct apple_dcp_afkep *ep,
+		struct apple_epic_service *service, u32 channel, u16 tag,
+		void *payload, size_t payload_size)
 {
 	struct epic_cmd *cmd = payload;
-	struct apple_epic_service *service;
 	unsigned long flags;
 	u8 idx = tag & 0xff;
 	void *rxbuf, *txbuf;
 	dma_addr_t rxbuf_dma, txbuf_dma;
 	size_t rxlen, txlen;
-
-	service = afk_epic_find_service(ep, channel);
-	if (!service) {
-		dev_warn(ep->dev, "AFK[ep:%02x]: command reply on disabled channel %u\n",
-			 ep->endpoint, channel);
-		return;
-	}
 
 	if (payload_size < sizeof(*cmd)) {
 		dev_err(ep->dev,
@@ -426,6 +419,27 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u32 channel,
 		dma_free_coherent(ep->dev, rxlen, rxbuf, rxbuf_dma);
 	if (txbuf && txlen)
 		dma_free_coherent(ep->dev, txlen, txbuf, txbuf_dma);
+}
+
+static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u16 type,
+			u32 channel, u16 tag, void *payload, size_t payload_size)
+{
+	struct apple_epic_service *service;
+	service = afk_epic_find_service(ep, channel);
+	if (!service) {
+		dev_warn(ep->dev, "AFK[ep:%02x]: reply on disabled channel %u\n",
+			 ep->endpoint, channel);
+		return;
+	}
+
+	switch (type) {
+	case EPIC_SUBTYPE_STD_SERVICE:
+		afk_handle_reply_cmd(ep, service, channel, tag, payload, payload_size);
+		return;
+	default:
+		dev_err(ep->dev,
+			"Received unknown AFK reply type: 0x%x\n", type);
+	}
 }
 
 struct epic_std_service_ap_call {
@@ -703,7 +717,7 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 		return afk_recv_handle_teardown(ep, channel);
 
 	if (type == EPIC_TYPE_REPLY && eshdr->category == EPIC_CAT_REPLY)
-		return afk_recv_handle_reply(ep, channel,
+		return afk_recv_handle_reply(ep, le16_to_cpu(eshdr->type), channel,
 					     le16_to_cpu(eshdr->tag), payload,
 					     payload_size);
 
