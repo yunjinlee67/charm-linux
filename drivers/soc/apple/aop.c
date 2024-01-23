@@ -20,8 +20,7 @@
 
 #define APPLE_AOP_COPROC_CPU_CONTROL	 0x44
 #define APPLE_AOP_COPROC_CPU_CONTROL_RUN BIT(4)
-
-#define AOP_BOOT_TIMEOUT msecs_to_jiffies(1000)
+#define APPLE_AOP_NUM_ENDPOINTS 8
 
 enum {
 	SPUAPP_ENDPOINT       = 0x20,
@@ -162,13 +161,6 @@ static const struct apple_epic_service_ops spuappep_ops[] = {
 	{}
 };
 
-static int spuappep_init(struct apple_aop *aop)
-{
-	aop->spuappep = aop_afk_init(aop, SPUAPP_ENDPOINT, spuappep_ops);
-	afk_start(aop->spuappep);
-	return 0;
-}
-
 /* accel endpoint */
 static void accel_service_init(struct apple_epic_service *service, const char *name,
 			const char *class, s64 unit)
@@ -183,13 +175,6 @@ static const struct apple_epic_service_ops accelep_ops[] = {
 	},
 	{}
 };
-
-static int accelep_init(struct apple_aop *aop)
-{
-	aop->accelep = aop_afk_init(aop, ACCEL_ENDPOINT, accelep_ops);
-	afk_start(aop->accelep);
-	return 0;
-}
 
 /* gyro endpoint */
 static void gyro_service_init(struct apple_epic_service *service, const char *name,
@@ -206,14 +191,6 @@ static const struct apple_epic_service_ops gyroep_ops[] = {
 	{}
 };
 
-static int gyroep_init(struct apple_aop *aop)
-{
-	aop->gyroep = aop_afk_init(aop, GYRO_ENDPOINT, gyroep_ops);
-	aop->gyroep->dummy = true; // do not start gyro rx/tx
-	afk_start(aop->gyroep);
-	return 0;
-}
-
 /* als endpoint */
 static void als_service_init(struct apple_epic_service *service, const char *name,
 			const char *class, s64 unit)
@@ -228,13 +205,6 @@ static const struct apple_epic_service_ops alsep_ops[] = {
 	},
 	{}
 };
-
-static int alsep_init(struct apple_aop *aop)
-{
-	aop->alsep = aop_afk_init(aop, ALS_ENDPOINT, alsep_ops);
-	afk_start(aop->alsep);
-	return 0;
-}
 
 /* wakehint endpoint */
 static void wakehint_service_init(struct apple_epic_service *service, const char *name,
@@ -251,13 +221,6 @@ static const struct apple_epic_service_ops wakehintep_ops[] = {
 	{}
 };
 
-static int wakehintep_init(struct apple_aop *aop)
-{
-	aop->wakehintep = aop_afk_init(aop, WAKEHINT_ENDPOINT, wakehintep_ops);
-	afk_start(aop->wakehintep);
-	return 0;
-}
-
 /* unk26 endpoint */
 static void unk26_service_init(struct apple_epic_service *service, const char *name,
 			const char *class, s64 unit)
@@ -272,13 +235,6 @@ static const struct apple_epic_service_ops unk26ep_ops[] = {
 	},
 	{}
 };
-
-static int unk26ep_init(struct apple_aop *aop)
-{
-	aop->unk26ep = aop_afk_init(aop, UNK26_ENDPOINT, unk26ep_ops);
-	afk_start(aop->unk26ep);
-	return 0;
-}
 
 /* audio endpoint */
 static void audio_service_init(struct apple_epic_service *service, const char *name,
@@ -295,13 +251,6 @@ static const struct apple_epic_service_ops audioep_ops[] = {
 	{}
 };
 
-static int audioep_init(struct apple_aop *aop)
-{
-	aop->audioep = aop_afk_init(aop, AUDIO_ENDPOINT, audioep_ops);
-	afk_start(aop->audioep);
-	return 0;
-}
-
 /* voicetrigger endpoint */
 static void voicetrigger_service_init(struct apple_epic_service *service, const char *name,
 			const char *class, s64 unit)
@@ -317,52 +266,68 @@ static const struct apple_epic_service_ops voicetriggerep_ops[] = {
 	{}
 };
 
-static int voicetriggerep_init(struct apple_aop *aop)
+static int apple_aop_init_endpoints(struct apple_aop *aop)
 {
+	aop->spuappep = aop_afk_init(aop, SPUAPP_ENDPOINT, spuappep_ops);
+	if (IS_ERR(aop->spuappep))
+		return PTR_ERR(aop->spuappep);
+
+	aop->accelep = aop_afk_init(aop, ACCEL_ENDPOINT, accelep_ops);
+	if (IS_ERR(aop->accelep))
+		return PTR_ERR(aop->accelep);
+
+	aop->gyroep = aop_afk_init(aop, GYRO_ENDPOINT, gyroep_ops);
+	if (IS_ERR(aop->gyroep))
+		return PTR_ERR(aop->gyroep);
+
+	aop->alsep = aop_afk_init(aop, ALS_ENDPOINT, alsep_ops);
+	if (IS_ERR(aop->alsep))
+		return PTR_ERR(aop->alsep);
+
+	aop->wakehintep = aop_afk_init(aop, WAKEHINT_ENDPOINT, wakehintep_ops);
+	if (IS_ERR(aop->wakehintep))
+		return PTR_ERR(aop->wakehintep);
+
+	aop->unk26ep = aop_afk_init(aop, UNK26_ENDPOINT, unk26ep_ops);
+	if (IS_ERR(aop->unk26ep))
+		return PTR_ERR(aop->unk26ep);
+
+	aop->audioep = aop_afk_init(aop, AUDIO_ENDPOINT, audioep_ops);
+	if (IS_ERR(aop->audioep))
+		return PTR_ERR(aop->audioep);
+
 	aop->voicetriggerep = aop_afk_init(aop, VOICETRIGGER_ENDPOINT, voicetriggerep_ops);
-	afk_start(aop->voicetriggerep);
+	if (IS_ERR(aop->voicetriggerep))
+		return PTR_ERR(aop->voicetriggerep);
+
 	return 0;
+}
+
+static int apple_aop_start_endpoints(struct apple_aop *aop)
+{
+	int ret;
+
+	// fucking c declaration
+	struct apple_dcp_afkep *eps[APPLE_AOP_NUM_ENDPOINTS] = {aop->spuappep, aop->accelep, aop->gyroep, aop->alsep, aop->wakehintep, aop->unk26ep, aop->audioep, aop->voicetriggerep};
+
+	ret = afk_start_bulk(eps, APPLE_AOP_NUM_ENDPOINTS);
+	if (ret)
+		dev_warn(aop->dev, "Failed to start all endpoints: %d", ret);
+
+	return ret;
 }
 
 static int apple_aop_start(struct apple_aop *aop)
 {
 	int ret;
 
-	// start all the endpoints. doesn't mean we use all of them, but all the eps have to be hello/acked to kick up any one of them
+	// initialize all the endpoints. doesn't mean we activate all of them, but all the endpoints have initialized to use any one of them
 
-	ret = spuappep_init(aop);
+	ret = apple_aop_init_endpoints(aop);
 	if (ret)
-		dev_warn(aop->dev, "Failed to start spuapp endpoint: %d", ret);
+		return ret;
 
-	ret = accelep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start accel endpoint: %d", ret);
-
-	ret = gyroep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start gyro endpoint: %d", ret);
-
-	ret = alsep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start als endpoint: %d", ret);
-
-	ret = wakehintep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start wakehint endpoint: %d", ret);
-
-	ret = unk26ep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start unk26 endpoint: %d", ret);
-
-	ret = audioep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start audio endpoint: %d", ret);
-
-	ret = voicetriggerep_init(aop);
-	if (ret)
-		dev_warn(aop->dev, "Failed to start voicetrigger endpoint: %d", ret);
-
-	return ret;
+	return apple_aop_start_endpoints(aop);
 }
 
 static void apple_aop_recv_msg(void *cookie, u8 endpoint, u64 message)
