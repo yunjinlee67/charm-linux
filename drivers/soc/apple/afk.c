@@ -114,6 +114,30 @@ int afk_start(struct apple_dcp_afkep *ep)
 		return -ETIMEDOUT;
 	else
 		return 0;
+	return 0;
+}
+
+int afk_start_bulk(struct apple_dcp_afkep **eps, int num)
+{
+	int i, ret;
+
+	for (i = 0; i < num; i++) {
+		struct apple_dcp_afkep *ep = eps[i];
+		reinit_completion(&ep->started);
+		apple_rtkit_start_ep(ep->rtk, ep->endpoint);
+		afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_INIT));
+	}
+
+	for (i = 0; i < num; i++) {
+		struct apple_dcp_afkep *ep = eps[i];
+		ret = wait_for_completion_timeout(&ep->started, msecs_to_jiffies(1000));
+		if (ret <= 0) {
+			dev_warn(ep->dev, "Timed out on starting endpoint %x\n",
+				ep->endpoint);
+		}
+	}
+
+	return 0;
 }
 
 static void afk_alloc_roundtrip(struct apple_dcp_afkep *ep, u64 message,

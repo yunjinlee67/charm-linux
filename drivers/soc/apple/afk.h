@@ -199,6 +199,8 @@ struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
 		void *priv, u32 endpoint, const struct apple_epic_service_ops *ops,
 		const struct apple_afk_epic_ops *ep_ops);
 int afk_start(struct apple_dcp_afkep *ep);
+int afk_start_bulk(struct apple_dcp_afkep **eps, int num);
+
 int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
 int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 		  enum epic_type etype, enum epic_category ecat, u8 stype,
