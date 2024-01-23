@@ -353,6 +353,60 @@ static void afk_recv_handle_teardown(struct apple_dcp_afkep *ep, u32 channel)
 		ops->teardown(service);
 }
 
+static void afk_handle_reply_retcode(struct apple_dcp_afkep *ep,
+		struct apple_epic_service *service, u32 channel, u16 tag,
+		void *payload, size_t payload_size)
+{
+	unsigned long flags;
+	u8 idx = tag & 0xff;
+
+	if (payload_size < sizeof(__le32)) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: rc reply on channel 0x%x too small: %ld\n",
+			ep->endpoint, channel, payload_size);
+		return;
+	}
+
+	if (payload_size != sizeof(__le32)) {
+		dev_warn(ep->dev,
+			"AFK[ep:%02x]: rc reply on channel 0x%x larger than expected %ld\n",
+			ep->endpoint, channel, payload_size);
+	}
+
+	if (idx >= MAX_PENDING_CMDS) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: rc reply on channel 0x%x out of range: %d\n",
+			ep->endpoint, channel, idx);
+		return;
+	}
+
+	spin_lock_irqsave(&service->lock, flags);
+	if (service->cmds[idx].done) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: rc reply on channel 0x%x already handled\n",
+			ep->endpoint, channel);
+		spin_unlock_irqrestore(&service->lock, flags);
+		return;
+	}
+
+#if 0
+	if (tag != service->cmds[idx].tag) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: rc reply on channel 0x%x has invalid tag: expected 0x%04x != 0x%04x\n",
+			ep->endpoint, channel, tag, service->cmds[idx].tag);
+		spin_unlock_irqrestore(&service->lock, flags);
+		return;
+	}
+#endif
+
+	service->cmds[idx].done = true;
+	service->cmds[idx].retcode = le32_to_cpu(*(__le32 *)payload);
+	if (service->cmds[idx].completion)
+		complete(service->cmds[idx].completion);
+
+	spin_unlock_irqrestore(&service->lock, flags);
+}
+
 static void afk_handle_reply_cmd(struct apple_dcp_afkep *ep,
 		struct apple_epic_service *service, u32 channel, u16 tag,
 		void *payload, size_t payload_size)
@@ -435,6 +489,9 @@ static void afk_recv_handle_reply(struct apple_dcp_afkep *ep, u16 type,
 	switch (type) {
 	case EPIC_SUBTYPE_STD_SERVICE:
 		afk_handle_reply_cmd(ep, service, channel, tag, payload, payload_size);
+		return;
+	case EPIC_SUBTYPE_RETCODE:
+		afk_handle_reply_retcode(ep, service, channel, tag, payload, payload_size);
 		return;
 	default:
 		dev_err(ep->dev,
