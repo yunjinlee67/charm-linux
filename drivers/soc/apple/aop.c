@@ -117,7 +117,7 @@ static const struct apple_afk_epic_ops apple_aop_epic_ops = {
 	.recv_handle_init = apple_aop_recv_handle_init,
 };
 
-#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops, 7, &apple_aop_epic_ops))
+#define aop_afk_init(aop, ep, ops) (afk_init((aop)->dev, (aop)->rtk, (aop), ep, ops, &apple_aop_epic_ops))
 
 static int aop_epic_hello_report(struct apple_epic_service *service,
 			 const void *data, size_t data_size)
