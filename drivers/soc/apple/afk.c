@@ -673,7 +673,7 @@ static bool afk_recv(struct apple_dcp_afkep *ep)
 	channel = le32_to_cpu(hdr->channel);
 	type = le32_to_cpu(hdr->type);
 
-	rptr = ALIGN(rptr + sizeof(*hdr) + size, 1 << BLOCK_SHIFT);
+	rptr = ALIGN(rptr + sizeof(*hdr) + size, ep->rxbfr.blksz);
 	if (WARN_ON(rptr > ep->rxbfr.bufsz))
 		rptr = 0;
 	if (rptr == ep->rxbfr.bufsz)
@@ -893,7 +893,7 @@ int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 
 	memcpy(ep->txbfr.buf + wptr, payload, payload_len);
 	wptr += payload_len;
-	wptr = ALIGN(wptr, 1 << BLOCK_SHIFT);
+	wptr = ALIGN(wptr, ep->txbfr.blksz);
 	if (wptr == ep->txbfr.bufsz)
 		wptr = 0;
 	trace_afk_send_rwptr_post(ep, rptr, wptr);
