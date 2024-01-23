@@ -139,6 +139,11 @@ int afk_start_bulk(struct apple_dcp_afkep **eps, int num)
 	return 0;
 }
 
+static void afk_rbep_init(struct apple_dcp_afkep *ep, u64 message)
+{
+	afk_send(ep, FIELD_PREP(RBEP_TYPE, RBEP_INIT_ACK));
+}
+
 static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 {
 	u32 size = FIELD_GET(GETBUF_SIZE, message) << BLOCK_SHIFT;
@@ -678,6 +683,10 @@ static void afk_receive_message_worker(struct work_struct *work_)
 
 	type = FIELD_GET(RBEP_TYPE, work->message);
 	switch (type) {
+	case RBEP_INIT:
+		afk_rbep_init(work->ep, work->message);
+		break;
+
 	case RBEP_INIT_ACK:
 		break;
 
