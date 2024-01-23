@@ -153,7 +153,6 @@ struct apple_dcp_afkep {
 
 	u32 endpoint;
 	struct workqueue_struct *wq;
-	bool dummy; // do not send RBEP_START message. used only for aop's gyro
 
 	struct completion started;
 	struct completion stopped;
