@@ -66,7 +66,7 @@ static void afk_send(struct apple_dcp_afkep *ep, u64 message)
 
 struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
 			void *priv, u32 endpoint, const struct apple_epic_service_ops *ops,
-			u32 hdr_shift, const struct apple_afk_epic_ops *ep_ops)
+			const struct apple_afk_epic_ops *ep_ops)
 {
 	struct apple_dcp_afkep *afkep;
 	int ret;
@@ -81,7 +81,6 @@ struct apple_dcp_afkep *afk_init(struct device *dev, struct apple_rtkit *rtk,
 	afkep->ep_ops = ep_ops;
 	afkep->ops = ops;
 	afkep->endpoint = endpoint;
-	afkep->hdr_shift = hdr_shift;
 	afkep->wq = alloc_ordered_workqueue("apple-dcp-afkep%02x",
 					    WQ_MEM_RECLAIM, endpoint);
 	if (!afkep->wq) {
@@ -173,46 +172,47 @@ static void afk_getbuf(struct apple_dcp_afkep *ep, u64 message)
 }
 
 /*
- * AFK ringbuffer reserves the first block for exchanging rptr/wptrs, which is
- * the ringbuf "header". But the ringbuf header structure differs across
- * device and firmware versions. Thankfully this difference is minimal and
- * we can still share this code. For instance, dcp's (and aop<12.3's) header:
- *
- *  struct afk_ringbuffer_header {
- *	   __le32 bufsz;
- *	   u32 unk;
- *	   u32 _pad1[14]; // 30 for aop
- *	   __le32 rptr;
- *	   u32 _pad2[15]; // 31 for aop
- *	   __le32 wptr;
- *	   u32 _pad3[15]; // 31 for aop
- *  };
- *
- * i.e. each block is placed apart at stride 0x40 for dcp; for aop it's 0x80.
- * Since we can't have a nice header struct anymore, pass the stride and
- * access rptr/wptrs through calulcated offsets.
- */
+The first three blocks of the ringbuffer is reserved for exchanging bufsz,
+rptr, wptr:
+
+             bufsz      unk
+00000000  00007e80 00070006 00000000 00000000 00000000 00000000 00000000 00000000
+00000020  00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
+00000040  *   rptr
+00000080  00000600 00000000 00000000 00000000 00000000 00000000 00000000 00000000
+000000a0  00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
+000000c0  *   wptr
+00000100  00000680 00000000 00000000 00000000 00000000 00000000 00000000 00000000
+00000120  00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
+00000140  *
+
+Note how each block is spread out by some blksz multiple of 0x40
+(step) or the BLOCK_SHIFT. Here, blksz is 0x80. The 0th block holds the bufsize,
+the 1st block holds the rptr, and the 2nd block holds the wptr. The
+actual contents of the ringbuffer starts after the first three blocks,
+which will be collectively called the "header".
+*/
 
 static inline u32 afk_rb_get_rptr(struct afk_ringbuffer *bfr)
 {
-	__le32 rptr = *(__le32 *)(bfr->hdr + (1 << bfr->hdr_shift));
+	__le32 rptr = *(__le32 *)(bfr->hdr + bfr->blksz * 1);
 	return le32_to_cpu(rptr);
 }
 
 static inline u32 afk_rb_get_wptr(struct afk_ringbuffer *bfr)
 {
-	__le32 wptr = *(__le32 *)(bfr->hdr + (2 << bfr->hdr_shift));
+	__le32 wptr = *(__le32 *)(bfr->hdr + bfr->blksz * 2);
 	return le32_to_cpu(wptr);
 }
 
 static inline void afk_rb_set_rptr(struct afk_ringbuffer *bfr, u32 rptr)
 {
-	*(__le32 *)(bfr->hdr + (1 << bfr->hdr_shift)) = cpu_to_le32(rptr);
+	*(__le32 *)(bfr->hdr + bfr->blksz * 1) = cpu_to_le32(rptr);
 }
 
 static inline void afk_rb_set_wptr(struct afk_ringbuffer *bfr, u32 wptr)
 {
-	*(__le32 *)(bfr->hdr + (2 << bfr->hdr_shift)) = cpu_to_le32(wptr);
+	*(__le32 *)(bfr->hdr + bfr->blksz * 2) = cpu_to_le32(wptr);
 }
 
 static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
@@ -221,7 +221,7 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	u32 base = FIELD_GET(INITRB_OFFSET, message) << BLOCK_SHIFT;
 	u32 size = FIELD_GET(INITRB_SIZE, message) << BLOCK_SHIFT;
 	u16 tag = FIELD_GET(INITRB_TAG, message);
-	u32 bufsz, hdrsz, end;
+	u32 bufsz, hdrsz, blksz, end;
 
 	if (tag != ep->bfr_tag) {
 		dev_err(ep->dev, "AFK[ep:%02x]: expected tag 0x%x but got 0x%x",
@@ -251,18 +251,46 @@ static void afk_init_rxtx(struct apple_dcp_afkep *ep, u64 message,
 	}
 
 	bfr->hdr = ep->bfr + base;
-	bfr->hdr_shift = ep->hdr_shift;
+
+	/* Recall the first three blocks are bufsz, rptr, wptr. bufsz is thus
+	 * always located at (ep->bfr + base) + blksize * 0, or simply the
+	 * ringbuffer base address.
+	 */
 	bufsz = le32_to_cpu(*(__le32 *)bfr->hdr);
-	hdrsz = 3 << bfr->hdr_shift; /* bufsz, rptr, wptr block */
-	if (bufsz + hdrsz != size) {
+
+	/* In the mailbox message we're given "size", which is the total ringbuffer
+	 * size (header + body). Recall in the 0th block we found "bufsz", which is
+	 * the ringbuffer *body* size. Subtract to calculate the header size.
+	 */
+	if (size <= bufsz) {
 		dev_err(ep->dev,
-			"AFK[ep:%02x]: ring buffer size 0x%x + header size 0x%x != expected 0x%x",
-			ep->endpoint, bufsz, hdrsz, size);
+			"AFK[ep:%02x]: total ringbuffer size (0x%x) > body size (0x%x)",
+			ep->endpoint, size, bufsz);
+		return;
+	}
+	hdrsz = size - bufsz;
+
+	/* The header always has three blocks: bufsz, rptr, wptr. Divide the header
+	 * size by 3 to bootstrap the ringbuffer block size.
+	 */
+	if (hdrsz % 3) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: header size 0x%x (0x%x - 0x%x) must be multiple of 3",
+			ep->endpoint, hdrsz, size, bufsz);
+		return;
+	}
+	blksz = hdrsz / 3;
+
+	if (blksz < (1 << BLOCK_SHIFT) || blksz % (1 << BLOCK_SHIFT)) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: blksz 0x%x must be multiple of 0x%x",
+			ep->endpoint, blksz, 1 << BLOCK_SHIFT);
 		return;
 	}
 
 	bfr->buf = bfr->hdr + hdrsz;
 	bfr->bufsz = bufsz;
+	bfr->blksz = blksz;
 	bfr->ready = true;
 
 	if (ep->rxbfr.ready && ep->txbfr.ready && !ep->dummy)
