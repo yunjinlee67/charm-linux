@@ -568,13 +568,6 @@ static void afk_recv_handle_std_service(struct apple_dcp_afkep *ep, u32 channel,
 		return;
 	}
 
-	if (type == EPIC_TYPE_NOTIFY && eshdr->category == EPIC_CAT_REPORT) {
-		if (service->ops->report)
-			service->ops->report(service, le16_to_cpu(eshdr->type),
-					     payload, payload_size);
-		return;
-	}
-
 	dev_err(ep->dev,
 		"AFK[ep:%02x]: channel %d received unhandled standard service message: %x / %x\n",
 		ep->endpoint, channel, type, eshdr->category);
@@ -790,6 +783,13 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 	if (subtype == EPIC_SUBTYPE_STD_SERVICE)
 		return afk_recv_handle_std_service(
 			ep, channel, type, ehdr, eshdr, payload, payload_size);
+
+	if (type == EPIC_TYPE_NOTIFY && eshdr->category == EPIC_CAT_REPORT) {
+		if (service->ops->report)
+			service->ops->report(service, le16_to_cpu(eshdr->type),
+					     payload, payload_size);
+		return;
+	}
 
 	dev_err(ep->dev, "AFK[ep:%02x]: channel %d received unhandled message "
 		"(type %x subtype %x)\n", ep->endpoint, channel, type, subtype);
