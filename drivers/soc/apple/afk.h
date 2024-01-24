@@ -215,4 +215,7 @@ const struct apple_epic_service_ops *
 	afk_match_service(struct apple_dcp_afkep *ep, const char *name);
 struct apple_epic_service *afk_epic_find_service(struct apple_dcp_afkep *ep,
 						 u32 channel);
+struct apple_epic_service *afk_epic_find_service_by_name(struct apple_dcp_afkep *ep,
+						 const char *name);
+
 #endif

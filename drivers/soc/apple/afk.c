@@ -330,6 +330,16 @@ struct apple_epic_service *afk_epic_find_service(struct apple_dcp_afkep *ep,
     return NULL;
 }
 
+struct apple_epic_service *afk_epic_find_service_by_name(struct apple_dcp_afkep *ep,
+						 const char *name)
+{
+    for (u32 i = 0; i < ep->num_channels; i++)
+        if (ep->services[i].enabled && !strcmp(ep->services[i].ops->name, name))
+            return &ep->services[i];
+
+    return NULL;
+}
+
 static void afk_recv_handle_teardown(struct apple_dcp_afkep *ep, u32 channel)
 {
 	struct apple_epic_service *service;
