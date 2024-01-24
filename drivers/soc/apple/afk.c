@@ -501,6 +501,143 @@ static void afk_recv_handle_std_service(struct apple_dcp_afkep *ep, u32 channel,
 				   payload_size, true);
 }
 
+struct epic_std_service_init {
+	char name[16];
+	u32 unk0;
+	u32 unk1;
+	u32 retcode;
+	u32 unk3;
+	u32 channel;
+	u32 unk5;
+	u32 unk6;
+} __attribute__((packed));
+static_assert(sizeof(struct epic_std_service_init) == 0x2c);
+
+static void afk_std_service_init(struct apple_dcp_afkep *ep, u32 channel,
+				 u8 *payload, size_t payload_size)
+{
+	const struct apple_epic_service_ops *ops;
+	struct epic_std_service_init *prop;
+	u32 ch_idx;
+
+	WARN_ON(payload_size != sizeof(*prop));
+	if (payload_size < sizeof(*prop)) {
+		dev_err(ep->dev, "AFK[ep:%02x]: payload too small: %lx\n",
+			ep->endpoint, payload_size);
+		return;
+	}
+
+	if (ep->num_channels >= AFK_MAX_CHANNEL) {
+		dev_err(ep->dev, "AFK[ep:%02x]: too many enabled services!\n",
+			ep->endpoint);
+		return;
+	}
+
+	prop = (struct epic_std_service_init *)payload;
+	/* Don't use passed channel var. Parse it from the struct instead */
+	WARN_ON(afk_epic_find_service(ep, prop->channel));
+
+	ops = afk_match_service(ep, prop->name);
+	if (!ops) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: unable to match service %s on channel %d\n",
+			ep->endpoint, prop->name, prop->channel);
+		return;
+	}
+
+	ch_idx = ep->num_channels++;
+	spin_lock_init(&ep->services[ch_idx].lock);
+	ep->services[ch_idx].enabled = true;
+	ep->services[ch_idx].ops = ops;
+	ep->services[ch_idx].ep = ep;
+	ep->services[ch_idx].channel = prop->channel;
+	ep->services[ch_idx].cmd_tag = 0;
+	//ops->init(&ep->services[ch_idx], epic_name, epic_class, epic_unit);
+	dev_info(ep->dev, "AFK[ep:%02x]: new service %s on channel 0x%x\n",
+		 ep->endpoint, prop->name, prop->channel);
+}
+
+// only dcp uses this
+static void afk_recv_handle_init(struct apple_dcp_afkep *ep, u32 channel,
+				 u8 *payload, size_t payload_size)
+{
+#if 0
+	char name[32];
+	s64 epic_unit = -1;
+	u32 ch_idx;
+	const char *service_name = name;
+	const char *epic_name = NULL, *epic_class = NULL;
+	const struct apple_epic_service_ops *ops;
+	struct dcp_parse_ctx ctx;
+	u8 *props = payload + sizeof(name);
+	size_t props_size = payload_size - sizeof(name);
+
+	WARN_ON(afk_epic_find_service(ep, channel));
+
+	if (payload_size < sizeof(name)) {
+		dev_err(ep->dev, "AFK[ep:%02x]: payload too small: %lx\n",
+			ep->endpoint, payload_size);
+		return;
+	}
+
+	if (ep->num_channels >= AFK_MAX_CHANNEL) {
+		dev_err(ep->dev, "AFK[ep:%02x]: too many enabled services!\n",
+			ep->endpoint);
+		return;
+	}
+
+	strlcpy(name, payload, sizeof(name));
+
+	/*
+	 * in DCP firmware 13.2 DCP reports interface-name as name which starts
+	 * with "dispext%d" using -1 s ID for "dcp". In the 12.3 firmware
+	 * EPICProviderClass was used. If the init call has props parse them and
+	 * use EPICProviderClass to match the service.
+	 */
+	if (props_size > 36) {
+		int ret = parse(props, props_size, &ctx);
+		if (ret) {
+			dev_err(ep->dev,
+				"AFK[ep:%02x]: Failed to parse service init props for %s\n",
+				ep->endpoint, name);
+			return;
+		}
+		ret = parse_epic_service_init(&ctx, &epic_name, &epic_class, &epic_unit);
+		if (ret) {
+			dev_err(ep->dev,
+				"AFK[ep:%02x]: failed to extract init props: %d\n",
+				ep->endpoint, ret);
+			return;
+		}
+		service_name = epic_class;
+	} else {
+            service_name = name;
+        }
+
+	ops = afk_match_service(ep, service_name);
+	if (!ops) {
+		dev_err(ep->dev,
+			"AFK[ep:%02x]: unable to match service %s on channel %d\n",
+			ep->endpoint, service_name, channel);
+		goto free;
+	}
+
+	ch_idx = ep->num_channels++;
+	spin_lock_init(&ep->services[ch_idx].lock);
+	ep->services[ch_idx].enabled = true;
+	ep->services[ch_idx].ops = ops;
+	ep->services[ch_idx].ep = ep;
+	ep->services[ch_idx].channel = channel;
+	ep->services[ch_idx].cmd_tag = 0;
+	ops->init(&ep->services[ch_idx], epic_name, epic_class, epic_unit);
+	dev_info(ep->dev, "AFK[ep:%02x]: new service %s on channel %d\n",
+		 ep->endpoint, service_name, channel);
+free:
+	kfree(epic_name);
+	kfree(epic_class);
+#endif
+}
+
 static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 			    u8 *data, size_t data_size)
 {
@@ -542,15 +679,17 @@ static void afk_recv_handle(struct apple_dcp_afkep *ep, u32 channel, u32 type,
 				ep->endpoint, channel);
 			return;
 		}
-		if (subtype != EPIC_SUBTYPE_ANNOUNCE &&
-		    subtype != EPIC_SUBTYPE_STD_SERVICE) { // aop uses std as announce
+		if (subtype == EPIC_SUBTYPE_STD_SERVICE) {
+			afk_std_service_init(ep, channel, payload, payload_size);
+			return;
+		}
+		if (subtype != EPIC_SUBTYPE_ANNOUNCE) {
 			dev_err(ep->dev,
 				"AFK[ep:%02x]: expected announce but got 0x%x on channel %d\n",
 				ep->endpoint, subtype, channel);
 			return;
 		}
-
-		return ep->ep_ops->recv_handle_init(ep, subtype, channel, payload, payload_size);
+		return afk_recv_handle_init(ep, channel, payload, payload_size);
 	}
 
 	if (!service) {
