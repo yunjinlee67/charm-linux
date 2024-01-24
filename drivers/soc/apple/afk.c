@@ -573,8 +573,7 @@ static void afk_recv_handle_std_service(struct apple_dcp_afkep *ep, u32 channel,
 }
 
 struct epic_std_service_init {
-	char name[16];
-	u32 unk0;
+	char name[20];
 	u32 unk1;
 	u32 retcode;
 	u32 unk3;
