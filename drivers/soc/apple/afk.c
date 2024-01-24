@@ -1106,6 +1106,72 @@ out:
 	return ret;
 }
 
+/* Write payload directly into TX buffer */
+int afk_send_notify(struct apple_epic_service *service, u8 type,
+		     const void *payload, size_t payload_len, u32 *retcode)
+{
+	unsigned long flags;
+	int ret, idx;
+	u16 tag;
+	struct apple_dcp_afkep *ep = service->ep;
+	DECLARE_COMPLETION_ONSTACK(completion);
+
+	spin_lock_irqsave(&service->lock, flags);
+	idx = bitmap_find_free_region(service->cmd_map, MAX_PENDING_CMDS, 0);
+	if (idx < 0) {
+		ret = -ENOSPC;
+		goto err_unlock;
+	}
+
+	tag = (service->cmd_tag & 0xff) << 8;
+	tag |= idx & 0xff;
+	service->cmd_tag++;
+
+	service->cmds[idx].tag = tag;
+	service->cmds[idx].free_on_ack = false;
+	service->cmds[idx].done = false;
+	service->cmds[idx].completion = &completion;
+	init_completion(&completion);
+
+	spin_unlock_irqrestore(&service->lock, flags);
+
+	ret = afk_send_epic(service->ep, service->channel, tag,
+			    EPIC_TYPE_NOTIFY, EPIC_CAT_NOTIFY, type, payload,
+			    payload_len);
+	if (ret)
+		goto err_free_cmd;
+
+	ret = wait_for_completion_timeout(&completion,
+					  msecs_to_jiffies(MSEC_PER_SEC));
+
+	if (ret <= 0) {
+		spin_lock_irqsave(&service->lock, flags);
+		/*
+		 * Check again while we're inside the lock to make sure
+		 * the command wasn't completed just after
+		 * wait_for_completion_timeout returned.
+		 */
+		if (!service->cmds[idx].done) {
+			service->cmds[idx].completion = NULL;
+			service->cmds[idx].free_on_ack = true;
+			spin_unlock_irqrestore(&service->lock, flags);
+			return -ETIMEDOUT;
+		}
+		spin_unlock_irqrestore(&service->lock, flags);
+	}
+
+	ret = 0;
+	if (retcode)
+		*retcode = service->cmds[idx].retcode;
+
+err_free_cmd:
+	spin_lock_irqsave(&service->lock, flags);
+	bitmap_release_region(service->cmd_map, idx, 0);
+err_unlock:
+	spin_unlock_irqrestore(&service->lock, flags);
+	return ret;
+}
+
 int afk_send_command(struct apple_epic_service *service, u8 type,
 		     const void *payload, size_t payload_len, void *output,
 		     size_t output_len, u32 *retcode)

@@ -204,6 +204,8 @@ int afk_receive_message(struct apple_dcp_afkep *ep, u64 message);
 int afk_send_epic(struct apple_dcp_afkep *ep, u32 channel, u16 tag,
 		  enum epic_type etype, enum epic_category ecat, u8 stype,
 		  const void *payload, size_t payload_len);
+int afk_send_notify(struct apple_epic_service *service, u8 type,
+		     const void *payload, size_t payload_len, u32 *retcode);
 int afk_send_command(struct apple_epic_service *service, u8 type,
 		     const void *payload, size_t payload_len, void *output,
 		     size_t output_len, u32 *retcode);
