@@ -7,6 +7,7 @@
 
 #include <linux/apple-mailbox.h>
 #include <linux/completion.h>
+#include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>
 #include <linux/kernel.h>
@@ -52,6 +53,39 @@ struct apple_aop {
 
 enum {
 	AOP_REPORT_HELLO      = 0xc0,
+	AOP_REPORT_ALS_LUX    = 0xc4,
+};
+
+enum {
+	AOP_CMD_GET_HID_DESCRIPTOR = 0x1,
+	AOP_CMD_GET_PROPERTY       = 0xa,
+	AOP_CMD_SET_PROPERTY       = 0x4,
+};
+
+// Get property
+enum {
+	AOP_PROP_IS_READY     = 0x01,
+	AOP_PROP_MANUFACTURER = 0x0f,
+	AOP_PROP_CHIP_ID      = 0x11,
+	AOP_PROP_PLACEMENT    = 0x1e,
+	AOP_PROP_UNK_21       = 0x21,
+	AOP_PROP_ORIENTATION  = 0x2e,
+	AOP_PROP_LOCATION_ID  = 0x30,
+	AOP_PROP_PRODUCT_ID2  = 0x3f,
+	AOP_PROP_SERIAL_NO    = 0x3e,
+	AOP_PROP_VENDOR_ID    = 0x5a,
+	AOP_PROP_PRODUCT_ID   = 0x5b,
+	AOP_PROP_SERVICE_CONTROLLER = 0x64,
+	AOP_PROP_DEVICE_COUNT = 0x65,
+	AOP_PROP_VERSION      = 0x67,
+};
+
+// Set property
+enum {
+	AOP_PROP_INTERVAL     = 0x00,
+	AOP_PROP_CALIBRATION  = 0x0b,
+	AOP_PROP_MODE         = 0xd7,
+	AOP_PROP_VERBOSITY    = 0xe1,
 };
 
 static const struct apple_afk_epic_ops apple_aop_epic_ops = {
@@ -71,8 +105,8 @@ static int aop_epic_hello_report(struct apple_epic_service *service,
 	return 0;
 }
 
-static int aop_epic_handle_report(struct apple_epic_service *service, enum epic_subtype type,
-			 const void *data, size_t data_size)
+static int aop_epic_handle_report(struct apple_epic_service *service,
+			u16 type, const void *data, size_t data_size)
 {
 	switch (type) {
 	case AOP_REPORT_HELLO:
@@ -134,6 +168,59 @@ static const struct apple_epic_service_ops gyroep_ops[] = {
 };
 
 /* als endpoint */
+
+struct aop_als_lux_report {
+	u8 magic; // 0xec
+	__le32 sequence;
+	__le64 timestamp;
+
+	__le32 red;
+	__le32 green;
+	__le32 blue;
+	__le32 clear;
+
+	__le32 lux_maybe;
+	__le32 unk_zero;
+	__le32 status;
+
+	__le16 gain;
+	__le16 unk4;
+	__le16 unk5;
+	__le32 integration_time;
+} __attribute__((packed));
+
+static int aop_als_handle_report_lux(struct apple_epic_service *service,
+									 const void *data, size_t data_size)
+{
+	const struct aop_als_lux_report *rep;
+
+	if (data_size < sizeof(*rep)) {
+		afkep_err(service, "lux report size too small: 0x%zx\n", data_size);
+		return -EINVAL;
+	}
+	// WARN_ON(data_size != sizeof(*rep));
+
+	rep = data;
+	WARN_ON(rep->magic != 0xEC); // Erorr Correction?
+
+	afkep_info(service, "R: %d G: %d B: %d C: %d lux: 0x%x\n",
+		rep->red, rep->green, rep->blue, rep->clear, rep->lux_maybe);
+
+	return 0;
+}
+
+static int aop_als_handle_report(struct apple_epic_service *service,
+			           u16 type, const void *data, size_t data_size)
+{
+	switch (type) {
+	case AOP_REPORT_ALS_LUX:
+		return aop_als_handle_report_lux(service, data, data_size);
+	default:
+		afkep_err(service, "Unknown report type: %x", type);
+		return -EINVAL;
+	}
+}
+
 static void als_service_init(struct apple_epic_service *service, const char *name,
 			const char *class, s64 unit)
 {
@@ -143,7 +230,7 @@ static const struct apple_epic_service_ops alsep_ops[] = {
 	{
 		.name = "als",
 		.init = als_service_init,
-		.report = aop_epic_handle_report,
+		.report = aop_als_handle_report,
 	},
 	{}
 };
@@ -259,6 +346,123 @@ static int apple_aop_start_endpoints(struct apple_aop *aop)
 	return ret;
 }
 
+struct aop_set_prop_verbosity {
+	u32 pad;
+	__le32 key;
+	__le32 verbosity;
+} __attribute__((packed));
+
+static int apple_aop_set_verbosity(struct apple_aop *aop, struct apple_epic_service *srv, u32 verbosity)
+{
+	struct aop_set_prop_verbosity prop;
+	int ret;
+
+	prop.pad = 0;
+	prop.key = cpu_to_le32(AOP_PROP_VERBOSITY);
+	prop.verbosity = cpu_to_le32(verbosity);
+
+	ret = afk_send_notify(srv, AOP_CMD_SET_PROPERTY, &prop, sizeof(prop), NULL);
+	if (ret)
+		dev_warn(aop->dev, "Failed to send set prop cmd: %d", ret);
+
+	return 0;
+}
+
+// TODO calculate this in m1n1 and send it over in dt
+static const unsigned char als_calib_bin[] = {
+  0x01, 0x02, 0x00, 0x00, 0x00, 0xad, 0xab, 0x0a, 0x00, 0x01, 0x91, 0x00,
+  0x9a, 0x59, 0xfa, 0x00, 0x64, 0x00, 0x64, 0x00, 0x08, 0x08, 0x08, 0x04,
+  0x09, 0x63, 0xeb, 0xff, 0xff, 0xd4, 0x0e, 0x00, 0x00, 0xc7, 0xce, 0xff,
+  0xff, 0x23, 0x2e, 0x00, 0x00, 0xa2, 0x08, 0xcd, 0x14, 0xd6, 0x5f, 0x77,
+  0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x80, 0xaa, 0x7e, 0x53,
+  0x7f, 0x10, 0x84, 0xd9, 0x7e, 0x68, 0x7f, 0x68, 0x7f, 0xb3, 0x7f, 0xf1,
+  0x7d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x5b, 0x7e, 0x56, 0x7e, 0x00,
+  0x80, 0xca, 0x83, 0xe0, 0x7e, 0x79, 0x7f, 0x00, 0x80, 0x8d, 0x80, 0xf1,
+  0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xf3, 0x7c, 0x00, 0x80, 0x38,
+  0x7f, 0x88, 0x83, 0x0b, 0x7f, 0x05, 0x7f, 0xb9, 0x7f, 0xb9, 0x7f, 0x0f,
+  0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x75, 0x7e, 0x38, 0x7f, 0x69,
+  0x7f, 0xbf, 0x83, 0xf2, 0x7e, 0x16, 0x7f, 0x4e, 0x7f, 0x33, 0x7f, 0x1f,
+  0x7d
+};
+// static const unsigned int calib_bin_len = 145;
+
+struct aop_set_prop_calibration {
+	u32 pad;
+	__le32 key;
+	unsigned char calibration[145];
+} __attribute__((packed));
+
+static int apple_aop_set_calibration(struct apple_aop *aop, struct apple_epic_service *srv)
+{
+	struct aop_set_prop_calibration prop;
+	int ret;
+
+	prop.pad = 0;
+	prop.key = cpu_to_le32(AOP_PROP_CALIBRATION);
+	memcpy(prop.calibration, als_calib_bin, 145);
+
+	ret = afk_send_notify(srv, AOP_CMD_SET_PROPERTY, &prop, sizeof(prop), NULL);
+	if (ret)
+		dev_warn(aop->dev, "Failed to send set prop cmd: %d", ret);
+
+	return 0;
+}
+
+struct aop_set_prop_interval {
+	u32 pad;
+	__le32 key;
+	__le32 interval;
+} __attribute__((packed));
+
+static int apple_aop_set_interval(struct apple_aop *aop, struct apple_epic_service *srv, u32 interval)
+{
+	struct aop_set_prop_interval prop;
+	int ret;
+
+	prop.pad = 0;
+	prop.key = cpu_to_le32(AOP_PROP_INTERVAL);
+	prop.interval = cpu_to_le32(interval);
+
+	ret = afk_send_notify(srv, AOP_CMD_SET_PROPERTY, &prop, sizeof(prop), NULL);
+	if (ret)
+		dev_warn(aop->dev, "Failed to send set prop cmd: %d", ret);
+
+	return 0;
+}
+
+static int apple_aop_start_als(struct apple_aop *aop)
+{
+	int ret;
+
+	struct apple_epic_service *srv = afk_epic_find_service_by_name(aop->alsep, "als");
+	if (!srv) {
+		dev_warn(aop->dev, "Failed to find als service\n");
+		return -ENODEV;
+	}
+
+	ret = apple_aop_set_verbosity(aop, srv, 0xffffffff);
+	if (ret)
+		dev_warn(aop->dev, "failed to send set verbosity: %d", ret);
+
+	ret = apple_aop_set_calibration(aop, srv);
+	if (ret)
+		dev_warn(aop->dev, "failed to send set calibration: %d", ret);
+
+#if 1
+	ret = apple_aop_set_interval(aop, srv, 200000); // start
+	if (ret)
+		dev_warn(aop->dev, "failed to send set calibration: %d", ret);
+
+	mdelay(1000);
+#endif
+
+	ret = apple_aop_set_interval(aop, srv, 0); // stop
+	if (ret)
+		dev_warn(aop->dev, "failed to send set calibration: %d", ret);
+
+	return 0;
+}
+
 static int apple_aop_start(struct apple_aop *aop)
 {
 	int ret;
@@ -269,7 +473,15 @@ static int apple_aop_start(struct apple_aop *aop)
 	if (ret)
 		return ret;
 
-	return apple_aop_start_endpoints(aop);
+	ret = apple_aop_start_endpoints(aop);
+	if (ret)
+		return ret;
+
+	ret = apple_aop_start_als(aop);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static void apple_aop_recv_msg(void *cookie, u8 endpoint, u64 message)
